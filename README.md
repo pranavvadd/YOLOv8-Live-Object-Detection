@@ -26,3 +26,39 @@ On Day 1, the goal was to set up the development environment, verify YOLOv5 inst
 - Optimize frame processing for real-time detection speed.
 - Implement detection logging and analysis.
 
+---
+
+## Day 2: Livestream Frame Processing & YOLOv5 Integration
+
+### Objectives
+- Stream video frames from a YouTube livestream using Streamlink and FFmpeg
+- Feed livestream frames into the YOLOv5 model for real-time object detection
+- Render and display detected bounding boxes, class labels, and confidence scores on the live video
+- Lock stream quality at 1080p to improve detection clarity and reduce pixelation issues
+
+### Implementation Details
+
+- Used `streamlink` to fetch the YouTube livestream at **1080p** quality (`streamlink <url> 1080p --stdout`)
+- Piped stream through `ffmpeg` to convert into raw video frames with pixel format `bgr24` compatible with OpenCV
+- Captured raw frames in Python, converted to numpy arrays, and reshaped to (1080, 1920, 3) resolution
+- Loaded YOLOv5 pretrained model (`yolov5s.pt`) via PyTorch Hub, setting a confidence threshold of 0.25
+- Performed inference on each frame and rendered detection results (bounding boxes, class labels, confidence scores)
+- Displayed annotated frames using OpenCV in a window titled “YouTube Stream - YOLOv5 Detection”
+- Pressing `q` cleanly terminates the stream and closes all windows
+
+### Observations & Challenges
+
+- Initial stream frames appeared pixelated and blurry, typical for livestream start — locking at 1080p fixed this issue
+- Model loading takes several seconds initially due to downloading weights and model setup
+- Detection confidence scores were modest, and only a few objects (mainly people) were tagged — expected given streaming conditions and model size
+- Pressing `q` to quit sometimes raised a `Broken pipe` error caused by abrupt closing of FFmpeg/Streamlink subprocess pipes; this is harmless and does not affect functionality
+
+### Next Steps
+
+- Tune confidence thresholds and experiment with larger YOLOv5 models (e.g., `yolov5m`, `yolov5l`) to improve detection accuracy
+- Optimize frame processing speed to reduce latency and increase frame rate
+- Develop detection logging and analysis (Day 3) for meaningful data extraction from live detections
+
+---
+
+This stage successfully demonstrated real-time object detection on a YouTube livestream with YOLOv5, forming the foundation for further enhancements.
