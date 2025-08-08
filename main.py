@@ -1,34 +1,49 @@
 import cv2
 import subprocess
+import torch
+import numpy as np
 
+# Config
 youtube_url = "https://www.youtube.com/watch?v=rnXIjl_Rzy4"
+confidence_threshold = 0.25
+model_path = "yolov5s.pt"
+width, height = 1920, 1080  # Force 1080p
 
-# Use streamlink to fetch the YouTube stream and pipe it to OpenCV
-streamlink_cmd = [
-    "streamlink",
-    "--stdout",
-    youtube_url,
-    "best"
-]
+# Load YOLOv5
+print("[INFO] Loading YOLOv5 model...")
+model = torch.hub.load('ultralytics/yolov5', 'custom', path=model_path)
+model.conf = confidence_threshold
 
-# Start the streamlink process
-process = subprocess.Popen(streamlink_cmd, stdout=subprocess.PIPE)
+# Start streamlink -> ffmpeg pipeline
+print("[INFO] Starting YouTube livestream at 1080p...")
+ffmpeg_cmd = (
+    f"streamlink {youtube_url} 1080p --stdout | "
+    f"ffmpeg -i pipe:0 -f rawvideo -pix_fmt bgr24 -"
+)
 
-# OpenCV to read from the stream
-cap = cv2.VideoCapture(process.stdout)
+# Run process
+process = subprocess.Popen(
+    ffmpeg_cmd,
+    shell=True,
+    stdout=subprocess.PIPE,
+    bufsize=10**8
+)
 
-# Check if the stream opened successfully
 while True:
-    ret, frame = cap.read()
-    if not ret:
+    raw_frame = process.stdout.read(width * height * 3)
+    if not raw_frame:
         break
 
-    cv2.imshow('YouTube Stream', frame)
+    frame = np.frombuffer(raw_frame, np.uint8).reshape((height, width, 3))
 
+    # YOLO inference
+    results = model(frame)
+    annotated_frame = np.squeeze(results.render())
+
+    # Show annotated stream
+    cv2.imshow("YouTube Stream - YOLOv5 Detection", annotated_frame)
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
 
-# Cleanup
-cap.release()
-process.kill()
+process.terminate()
 cv2.destroyAllWindows()
