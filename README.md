@@ -59,6 +59,46 @@ On Day 1, the goal was to set up the development environment, verify YOLOv5 inst
 - Optimize frame processing speed to reduce latency and increase frame rate
 - Develop detection logging and analysis (Day 3) for meaningful data extraction from live detections
 
----
 
 This stage successfully demonstrated real-time object detection on a YouTube livestream with YOLOv5, forming the foundation for further enhancements.
+
+---
+
+## Day 3: Detection Logging & Analysis
+
+### Overview  
+On Day 3, the focus was to extend the real-time object detection pipeline by extracting detailed detection data from YOLOv5 outputs and logging it for post-analysis. This involved capturing detected object classes, confidence scores, bounding box coordinates, and timestamps for each frame processed from a YouTube livestream.
+
+### Key Achievements  
+- Integrated YOLOv5 inference with live YouTube stream frames to extract detection metadata in real time.  
+- Implemented a CSV logging mechanism that records object class, confidence, bounding box coordinates, and timestamp for each detection above a configurable confidence threshold.  
+- Enabled graceful run-time limits to automatically stop processing after a fixed duration (120 seconds), facilitating manageable data sizes.  
+- Supported user interrupt via keyboard (pressing 'q') to terminate streaming and save logged data.  
+- Added frame skipping to reduce computational load and control the volume of logged data, improving performance and usability.  
+- Introduced configurable parameters for minimum confidence to log detections and a maximum line limit to prevent excessively large CSV files.
+
+### Implementation Details  
+- Utilized `streamlink` piped to `ffmpeg` for robust and efficient frame extraction from the YouTube livestream at 1080p resolution.  
+- Applied OpenCV to decode raw video frames from the subprocess stream for YOLOv5 model inference.  
+- Leveraged PyTorch Hub to load a custom YOLOv5 pretrained model and set inference confidence thresholds.  
+- Converted YOLOv5 predictions to pandas DataFrames for easy filtering and CSV writing.  
+- Managed CSV file creation with proper headers and incremental appending of detection data in real time.  
+- Implemented a frame counter to process every 10th frame, balancing detection frequency with system resource constraints.
+
+### Challenges & Resolutions  
+- **Excessive Logging Volume:** Initial implementation logged detections on every frame, resulting in thousands of entries within seconds, making the CSV file unwieldy.  
+  - *Solution:* Added frame skipping (processing every 10th frame) and increased the minimum confidence threshold for logging detections to 0.7.  
+  - Introduced a maximum logged lines cap (500) to prevent uncontrolled growth of the CSV file.  
+- **Streaming Pipeline Complexity:** Handling live video streams from YouTube required a combined shell pipeline (`streamlink | ffmpeg`) executed via `subprocess.Popen` with `shell=True` to correctly pipe the raw video data into OpenCV.  
+  - *Solution:* Maintained the pipeline as a single string command passed to the shell, ensuring compatibility and stream integrity.  
+- **Real-time Processing Performance:** Processing 1080p livestream frames and running YOLOv5 inference in real time posed performance challenges, risking dropped frames or lag.  
+  - *Solution:* Implemented frame skipping and tuned confidence thresholds to reduce inference frequency and computational overhead, preserving stream smoothness and detection relevance.  
+- **Graceful Termination:** Ensured that both automatic run-time limit and manual user quit commands correctly close streams and save logged data without corrupting the CSV file or leaving dangling processes.  
+
+### Next Steps  
+- Further optimize detection speed and accuracy (Day 4 focus).  
+- Explore smarter logging strategies such as deduplication of detections within short time windows.  
+- Enhance analysis tools to visualize and summarize the logged detection data.
+
+
+*This day’s work laid a solid foundation for robust, efficient, and manageable real-time object detection logging — a critical step towards building a reliable livestream analytics system.*
