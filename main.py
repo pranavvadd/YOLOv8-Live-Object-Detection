@@ -1,42 +1,50 @@
 import cv2
 import subprocess
-import torch
+import torch # Not needed for YOLOv8 but kept for potential future use
 import numpy as np
 import pandas as pd
 import time
 import os
+from ultralytics import YOLO  # YOLOv8
 
-# Config
+# --------------------
+# CONFIGURATION
+# --------------------
 youtube_url = "https://www.youtube.com/watch?v=86-7Dr7yeVQ"
-model_path = "yolov5s.pt"
-
-# Parameters
-model_conf_threshold = 0.25      # YOLO min confidence to consider detection
-min_csv_conf = 0.7               # Min confidence to log detection
-frame_skip = 10                  # Process every 10th frame
-max_logged_lines = 500           # Max lines to log in CSV
-run_seconds = 120                # Max run time
-width, height = 1920, 1080       # Frame size for 1080p
-
+model_path = "yolov8m.pt"  # Medium model for better accuracy
 csv_file = "detections_log.csv"
 
-# Ensure the model path exists
-print("[INFO] Loading YOLOv5 model...")
-model = torch.hub.load('ultralytics/yolov5', 'custom', path=model_path)
+model_conf_threshold = 0.25   # YOLO min confidence for detection
+min_csv_conf = 0.85           # Confidence threshold for logging
+frame_skip = 10               # Process every Nth frame
+max_logged_lines = 500        # Max lines in CSV
+run_seconds = 120             # Max runtime in seconds
+width, height = 1920, 1080    # Expected stream resolution
+frame_delay = 0.05            # Artificial delay to control FPS
+
+duplicate_reset_seconds = 5   # How long before duplicates can be logged again
+
+# --------------------
+# LOAD YOLO MODEL
+# --------------------
+print("[INFO] Loading YOLOv8 model...")
+model = YOLO(model_path)
 model.conf = model_conf_threshold
 
-# Ensure the CSV file exists
+# Prepare CSV file if it doesn’t exist
 if not os.path.exists(csv_file):
-    pd.DataFrame(columns=["timestamp", "class", "confidence", "x_min", "y_min", "x_max", "y_max"]).to_csv(csv_file, index=False)
+    pd.DataFrame(columns=["timestamp", "class", "confidence", "x_min", "y_min", "x_max", "y_max"]) \
+        .to_csv(csv_file, index=False)
 
-# Clear the CSV file if it already exists
+# --------------------
+# START STREAM
+# --------------------
 print("[INFO] Starting YouTube livestream at 1080p...")
 ffmpeg_cmd = (
     f"streamlink {youtube_url} 1080p --stdout | "
     f"ffmpeg -i pipe:0 -f rawvideo -pix_fmt bgr24 -"
 )
 
-# Start the FFmpeg process to read the YouTube stream
 process = subprocess.Popen(
     ffmpeg_cmd,
     shell=True,
@@ -44,61 +52,79 @@ process = subprocess.Popen(
     bufsize=10**8
 )
 
-# Check if the process started successfully
+# --------------------
+# PROCESS VIDEO
+# --------------------
 start_time = time.time()
 frame_count = 0
 logged_lines = 0
 
-# Main loop to read frames and process detections
-while True:
-    # Check if the run time limit has been reached
-    if time.time() - start_time > run_seconds:
-        print("[INFO] Run time limit reached, exiting...")
-        break
-    # Read raw frame data from the FFmpeg process
-    raw_frame = process.stdout.read(width * height * 3)
-    if not raw_frame:
-        print("[INFO] No more frames, exiting...")
-        break
-     # Check if the frame size matches the expected size
-    frame_count += 1
-    if frame_count % frame_skip != 0:
-        continue
-     # Convert raw frame data to a NumPy array
-    frame = np.frombuffer(raw_frame, np.uint8).reshape((height, width, 3))
+recent_detections = set()
+last_duplicate_reset = time.time()
 
-    # Resize the frame to match the model input size
-    results = model(frame)
-    detections = results.pandas().xyxy[0]
+try:
+    while True:
+        if time.time() - start_time > run_seconds:
+            print("[INFO] Run time limit reached, exiting...")
+            break
 
-    # Log detections to CSV if they meet the confidence threshold
-    for _, row in detections.iterrows():
-        if row['confidence'] >= min_csv_conf:
-            if logged_lines >= max_logged_lines:
-                print("[INFO] Max logged lines reached, stopping logging but continuing video...")
-                break
-             # Log the detection to the CSV file
-            pd.DataFrame([{
-                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-                "class": row['name'],
-                "confidence": float(row['confidence']),
-                "x_min": row['xmin'],
-                "y_min": row['ymin'],
-                "x_max": row['xmax'],
-                "y_max": row['ymax']
-            }]).to_csv(csv_file, mode='a', header=False, index=False)
-            logged_lines += 1
+        raw_frame = process.stdout.read(width * height * 3)
+        if not raw_frame:
+            print("[INFO] No more frames, exiting...")
+            break
 
-    # Display the frame with detections
-    annotated_frame = np.squeeze(results.render())
-    cv2.imshow("YouTube Stream - YOLOv5 Detection", annotated_frame)
+        frame_count += 1
+        if frame_count % frame_skip != 0:
+            continue
 
-    # Check for user exit request
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        print("[INFO] User requested exit.")
-        break
+        frame = np.frombuffer(raw_frame, np.uint8).reshape((height, width, 3))
 
-# Cleanup
-process.terminate()
-cv2.destroyAllWindows()
-print(f"[INFO] Detections saved to {csv_file}")
+        results = model(frame, verbose=False)
+        detections = results[0].boxes.data.cpu().numpy()
+
+        # Reset recent detections periodically
+        if time.time() - last_duplicate_reset > duplicate_reset_seconds:
+            recent_detections.clear()
+            last_duplicate_reset = time.time()
+
+        # Parse detections
+        for det in detections:
+            x_min, y_min, x_max, y_max, conf, cls_id = det
+            class_name = model.names[int(cls_id)]
+            if conf >= min_csv_conf:
+                det_key = (
+                    class_name,
+                    round(x_min, -1),
+                    round(y_min, -1),
+                    round(x_max, -1),
+                    round(y_max, -1)
+                )
+
+                if det_key not in recent_detections and logged_lines < max_logged_lines:
+                    pd.DataFrame([{
+                        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                        "class": class_name,
+                        "confidence": float(conf),
+                        "x_min": float(x_min),
+                        "y_min": float(y_min),
+                        "x_max": float(x_max),
+                        "y_max": float(y_max)
+                    }]).to_csv(csv_file, mode='a', header=False, index=False)
+
+                    logged_lines += 1
+                    recent_detections.add(det_key)
+
+        # Render detections
+        annotated_frame = results[0].plot()
+        cv2.imshow("YouTube Stream - YOLOv8 Detection", annotated_frame)
+
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            print("[INFO] User requested exit.")
+            break
+
+        time.sleep(frame_delay)
+
+finally:
+    process.terminate()
+    cv2.destroyAllWindows()
+    print(f"[INFO] Detections saved to {csv_file}")
